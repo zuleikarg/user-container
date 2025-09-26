@@ -1,0 +1,15 @@
+# ninja log v5
+0	7249	1758100770310883829	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cpu/dcn_v2_im2col_cpu.o	e5fa5b6eeaa39247
+0	9255	1758100772314889491	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cpu/dcn_v2_cpu.o	8fe739e58e85fdf1
+1	9792	1758100772850891005	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cpu/dcn_v2_psroi_pooling_cpu.o	22257c57ae35ff97
+1	19988	1758100783054919833	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cuda/dcn_v2_im2col_cuda.o	d875f20699955daa
+1	22415	1758100785478926682	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cuda/dcn_v2_cuda.o	ae5c55a81a53452b
+1	23139	1758100786206928739	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cuda/dcn_v2_psroi_pooling_cuda.o	e240c37b8e25b161
+2	26027	1758100789082936864	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/vision.o	731d986c8065a36a
+15	10207	1758100800098967986	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cpu/dcn_v2_im2col_cpu.o	e97b4e15c8d06d7b
+15	12313	1758100802206973942	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cpu/dcn_v2_psroi_pooling_cpu.o	2b5141da1fcc40a1
+14	12504	1758100802398974484	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cpu/dcn_v2_cpu.o	34764770227d575c
+15	20599	1758100810498997368	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cuda/dcn_v2_cuda.o	6ff47efd1867f0ed
+15	20791	1758100810694997922	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cuda/dcn_v2_im2col_cuda.o	49ea9585d51335e
+16	24248	1758100814151007686	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/cuda/dcn_v2_psroi_pooling_cuda.o	44103f43356caf4e
+16	26055	1758100815947012760	/root/yolact/external/DCNv2/build/temp.linux-x86_64-3.10/root/yolact/external/DCNv2/src/vision.o	bb274e1ac63f90fe

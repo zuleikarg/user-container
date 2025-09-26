@@ -1,0 +1,60 @@
+services:
+  user-container:
+    container_name: robot_flow
+    image: zuleikarg-container
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build
+    # Make sure the container can access the host's network
+    privileged: true
+    ipc: host
+    network_mode: host
+    # Start the container on boot, unless the container is stopped
+    restart: unless-stopped
+    # Enable support for GPU usage in the container.
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 'all'
+              capabilities: [ gpu ]
+    devices:
+      - /dev/video0:/dev/video0
+      - /dev/video2:/dev/video2
+      - /dev/video4:/dev/video4
+      - /dev/video6:/dev/video6
+    environment:
+      DISPLAY: $DISPLAY
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      CYCLONEDDS_URI: "/dds/cyclone_loopback.xml"
+      ROS2CLI_DDS_WRAPPER_DISABLE: 1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+
+      # Expose the DDS settings to the container
+      - type: bind
+        source: /data/app/avular/dds
+        target: /dds
+      # Mount a workspace to the container to allow the user to make persistent changes
+      # - type: bind
+      #   source: /data/user/containers/flow_ws
+      #   target: /home/user/flow_ws
+      # Expose the USB devices to the container
+      - type: bind
+        source: /dev/bus/usb
+        target: /dev/bus/usb
+      - type: bind
+        source: /dev/
+        target: /dev/
+      - type: bind
+        source: /dev/video
+        target: /dev/video
+    # Uncomment the following line to automatically start the ROS nodes
+    #command: ros2 launch pkg launch_file.py
+    command: sleep infinity
+    
+    
