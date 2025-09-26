@@ -1,3 +1,6 @@
+# __DISCLAIMER__
+This base code has been _taken_ from the repository: [avular-robotics:user_container:origin](https://github.com/avular-robotics/user-container/tree/origin)
+
 # User container for the Origin
 
 The user container is an example container that can be used to develop on the Origin. It comes pre-installed with ROS and the necessary dependencies to develop for the Origin. 
