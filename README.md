@@ -1,5 +1,5 @@
 # __DISCLAIMER__
-This base code has been _taken_ from the repository: [avular-robotics:user_container:origin](https://github.com/avular-robotics/user-container/tree/origin)
+This base code has been _taken_ from the repository: [avular-robotics:user-container:origin](https://github.com/avular-robotics/user-container/tree/origin)
 
 # User container for the Origin
 
