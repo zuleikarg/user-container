@@ -21,7 +21,7 @@ The user container is available on the Origin by default at `/data/user/containe
 
 3. Clone the user container files to the Origin
     ```bash
-    git clone --branch origin https://github.com/avular-robotics/user-container.git /data/user/containers
+    git clone https://github.com/zuleikarg/user-container.git /data/user/containers
     ```
 4. Building the user containers
     ```bash
@@ -45,7 +45,7 @@ docker exec -it user /bin/bash
 
 You can now start developing on the Origin. In the container, we have an user named `user`. 
 This user has sudo rights, so you can install packages and run commands as root. When entering 
-the container, you will be in the `/home/user/ws` directory. This is the workspace directory 
+the container, you will be in the `/home/user/flow_ws` directory. This is the workspace directory 
 where you can start developing your code. This workspace directory is also mounted from the host OS,
 this is done so that you can easily `down` and `up` the container without losing your code. 
 
@@ -59,4 +59,32 @@ After adding the package to the `Dockerfile` you need to rebuild the container. 
 the following command from the `/data/user/containers` directory:
 ```bash
 docker compose up -d --build
+```
+
+## Flow_ws
+
+The code included inside _flow_ws_ are related to the combination of OpticalFlow and Instance Segmentation in order to generate and discard the essential ORBs to proceed with the SLAM procedure.
+
+In different terminal windows the execution should be as follows:
+
+__For all terminals__
+```bash
+source install/setup.bash
+```
+
+__For different temrinals__
+```bash
+ros2 run sensor_image camera_publisher
+```
+
+```bash
+ros2 run yolact seg_node
+```
+
+```bash
+ros2 run neuflow_v2 infer_hf
+```
+
+```bash
+ros2 run dio motion_removal
 ```
