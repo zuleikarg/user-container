@@ -50,10 +50,10 @@ coco_cats_inv = {}
 color_cache = defaultdict(lambda: {})
 package_path = get_package_share_directory('yolact')
 trained_model = os.path.join(package_path, 'weights', 'yolact_plus_resnet50_54_800000.pth')
-top_k = 15
+top_k = 1
 cuda = True
 fast_nms = True
-cross_class_nms = False
+cross_class_nms = True
 display_masks = True
 display_bboxes = True
 display_text = True
@@ -77,23 +77,45 @@ seed = None
 mask_proto_debug = False
 crop = False
 video_multiframe = 1
-score_threshold = 0.15
+score_threshold = 0.5
 dataset = None
 detect = False
 display_fps= False
 emulate_playback = False
 
+#########################################################################################################
+### This code has been adapted from the original YOLACT repository: https://github.com/dbolya/yolact
+### Copyright (c) 2019 Daniel Bolya, Colin R. Raffel, and others. MIT License.
+
+### Modifications for ROS2 integration and OpticalFlow adaptation by Zuleika M. Redondo García, 2025.
+
+# The steps were taken by following the original DIO-SLAM paper: https://doi.org/10.3390/s24185929
+#   - For this goal, the frame information is taken from a ROS2 topic, which would correspond to the RGB camera feed of the robot.
+#   - Then, thanks to the segmenetaion of YOLACT, the non-rigid and rigid objects are segmented in the scene, separately.
+#   - The segmentation masks are published into three different ROS2 topics: nonrigid_segmentation, rigid_segmentation and camera_corr.
+#       -> Nonrigid objects: humans, animals, plants, etc.
+#       -> Rigid objects: furniture, vehicles, tools, etc.
+#       -> Camera_corr: original RGB image from the camera to allow synchronization with other implementations in the pipieline, such as Optical Flow.
+
+#########################################################################################################
+
 
 class Segmentation(Node):
 
     def __init__(self):
+        # Initialize node
         super().__init__('seg_node')
+
+        # Create publishers
         self.nonrigid_seg_ = self.create_publisher(Image, 'nonrigid_segmentation', 10)
         self.rigid_seg_ = self.create_publisher(Image, 'rigid_segmentation', 10)
         self.cam_corr_ = self.create_publisher(Image, 'camera_corr', 10)
 
+        # Thread lock for camera frame
         self.lock = threading.Lock()
         self.camera_frame_ = np.empty(0)
+
+        # CvBridge for image conversion
         self.bridge = CvBridge()
 
         # Get trained model and set configuration
@@ -103,13 +125,13 @@ class Segmentation(Node):
         self.config = self.model_path.model_name + '_config'
         set_cfg(self.config)
 
+        # Avoid overusing GPU memory
         torch.cuda.empty_cache()
 
         with torch.no_grad():
             if not os.path.exists('results'):
                 os.makedirs('results')
 
-            #if cuda.is_available():
             if torch.cuda.is_available():
                 cudnn.fastest = True
                 torch.set_default_tensor_type('torch.cuda.FloatTensor')
@@ -119,45 +141,51 @@ class Segmentation(Node):
 
             self.dataset = None 
 
+            # Load the model
             print('Loading model...', end='')
             self.net = Yolact()
             self.net.load_weights(self.trained_model)
             self.net.eval()
             print(' Done.')
 
+            # Move the model to GPU if available
             if torch.cuda.is_available():
                 self.net = self.net.cuda()
 
         self.processing_thread = threading.Thread(target=self.main_pipeline)
         self.processing_thread.daemon = True
 
+        # Create camera subscription
         self.camera = self.create_subscription(
             Image,
-            'camera',
+            '/robot/camera/rgb/image_raw',
             self.camera_callback,
             10)
-
+        
+        # Start processing thread to avoid blocking of camera callback
         self.processing_thread.start()
 
+    # CAMERA CALLBACK
     def camera_callback(self,msg):
-        #print()
         with self.lock:
             if (msg.height != 0):
                 self.camera_frame_ = self.bridge.imgmsg_to_cv2(msg, desired_encoding='rgb8')
   
-    def main_pipeline(self):
-          # MAIN PIPELINE
+    # MAIN PIPELINE:
+    #   - Main loop that processes incoming camera frames with YOLACT model
+    #   - Segmentation of non-rigid and rigid objects from the camera frame
+    def main_pipeline(self):    
         try:
             while rclpy.ok():
-                #print("okay")
                 with self.lock:
-                    if self.camera_frame_.size >0:
+                    if self.camera_frame_.size > 0:
                         with torch.no_grad():
-                            #print("enter")
                             evaluate(self.net, None, self.nonrigid_seg_, self.rigid_seg_,self.cam_corr_, self.camera_frame_)
                             self.get_logger().info("Iteration finished.")
                     else:
                         time.sleep(0.01)  # avoid busy-waiting
+
+        # Once the code is stoped, stop and join the thread properly
         except (KeyboardInterrupt, ExternalShutdownException):
             self.processing_thread.stop()
             self.processing_thread.join()
@@ -165,6 +193,14 @@ class Segmentation(Node):
             pass
 
 
+# PREPARATION FOR DISPLAY
+# Modifications:
+#  - The function now returns three images:
+#       -> img_numpy: original image with masks, bounding boxes and labels drawn
+#       -> img_nonrigid_numpy: binary image with non-rigid objects segmented in white
+#       -> img_rigid_numpy: binary image with rigid objects segmented in white
+#  - The segmentation masks for non-rigid and rigid objects are created based on COCO dataset class indices.
+#  - The images are processed to create binary masks and clean them up using morphological operations.
 def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, mask_alpha=0.45, fps_str=''):
     """
     Note: If undo_transform=False then im_h and im_w are allowed to be None.
@@ -176,6 +212,8 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
         img_gpu = img / 255.0
         h, w, _ = img.shape
     
+    # Thanks to postprocessing the score_threshold is applied to masks, boxes, and classes separately
+    # This way, it can keep some masks that passes the threshold regardless if their boxes do not pass it
     with timer.env('Postprocess'):
         save = cfg.rescore_bbox
         cfg.rescore_bbox = True
@@ -192,6 +230,7 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
             masks = t[3][idx]
         classes, scores, boxes = [x[idx].cpu().numpy() for x in t[:3]]
 
+    # The detections are reduced based on score threshold
     num_dets_to_consider = min(top_k, classes.shape[0])
     for j in range(num_dets_to_consider):
         if scores[j] < score_threshold:
@@ -216,9 +255,9 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
                 color_cache[on_gpu][color_idx] = color
             return color
         
-    # Get all the masks as white segments
+    # Get all the masks for non-rigid elements as white segments
     def get_nonrigid(j, on_gpu=None):
-            nonrigid_indices = {0, 1, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
+            nonrigid_indices = {0,14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24} # Indices on COCO dataet for non-rigid objects
             if classes[j] in nonrigid_indices:
                 color = (255, 255, 255)
             else:
@@ -229,9 +268,9 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
 
             return color
     
-    # Get all the masks as white segments
+    # Get all the masks for rigid elements as white segments
     def get_rigid(j, on_gpu=None):
-            nonrigid_indices = {0, 1, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
+            nonrigid_indices = {0, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24} # Indices on COCO dataset for rigid objects
             if classes[j] not in nonrigid_indices:
                 color = (255, 255, 255)
             else:
@@ -242,7 +281,7 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
 
             return color
 
-    # Copy the img_gpu stored for the white-segments images with show:1 and show:2 and show:3
+    # Copy the img_gpu stored for the segmented images as black frames
     img_nonrigid = img_gpu.clone().detach() *0
     img_rigid = img_gpu.clone().detach() *0
 
@@ -265,9 +304,7 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
         # This is 1 everywhere except for 1-mask_alpha where the mask is
         inv_alph_masks = masks * (-mask_alpha) + 1
         
-        # I did the math for this on pen and paper. This whole block should be equivalent to:
-        #    for j in range(num_dets_to_consider):
-        #        img_gpu = img_gpu * inv_alph_masks[j] + masks_color[j]
+        # Composite the image with the masks one by one
         masks_color_summand = masks_color[0]
         if num_dets_to_consider > 1:
             inv_alph_cumul = inv_alph_masks[:(num_dets_to_consider-1)].cumprod(dim=0)
@@ -290,6 +327,12 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
         img_nonrigid = img_nonrigid * inv_alph_masks.prod(dim=0) + masks_nonrigid_summand
         img_rigid = img_rigid * inv_alph_masks.prod(dim=0) + masks_rigid_summand
     
+    # Then draw the stuff that needs to be done on the cpu
+    # Note, make sure this is a uint8 tensor or opencv will not anti alias text for whatever reason
+    img_numpy = (img_gpu * 255).byte().cpu().numpy()
+    img_nonrigid_numpy = (img_nonrigid * 255).byte().cpu().numpy()
+    img_rigid_numpy = (img_rigid * 255).byte().cpu().numpy()
+
     if display_fps:
         # Draw the box for the fps on the GPU
         font_face = cv2.FONT_HERSHEY_DUPLEX
@@ -301,12 +344,6 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
         img_gpu[0:text_h+8, 0:text_w+8] *= 0.6 # 1 - Box alpha
 
 
-    # Then draw the stuff that needs to be done on the cpu
-    # Note, make sure this is a uint8 tensor or opencv will not anti alias text for whatever reason
-    img_numpy = (img_gpu * 255).byte().cpu().numpy()
-    img_nonrigid_numpy = (img_nonrigid * 255).byte().cpu().numpy()
-    img_rigid_numpy = (img_rigid * 255).byte().cpu().numpy()
-
     # Transform nonrigid and rigid images into BINARY IMAGES
     # Convert to grayscale
     img_nonrigid_numpy = cv2.cvtColor(img_nonrigid_numpy, cv2.COLOR_BGR2GRAY)
@@ -315,6 +352,12 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
     # Apply thresholding to create a binary image
     _, img_nonrigid_numpy = cv2.threshold(img_nonrigid_numpy, 127, 255, cv2.THRESH_BINARY)
     _, img_rigid_numpy = cv2.threshold(img_rigid_numpy, 127, 255, cv2.THRESH_BINARY)   
+    
+    # Apply morphological operations to clean up the masks
+    kernel = np.ones((7,7),np.uint8) 
+
+    img_nonrigid_numpy = cv2.morphologyEx(img_nonrigid_numpy, cv2.MORPH_CLOSE, kernel)
+    img_rigid_numpy = cv2.morphologyEx(img_rigid_numpy, cv2.MORPH_CLOSE, kernel)
 
     if display_fps:
         # Draw the text on the CPU
@@ -685,18 +728,24 @@ def badhash(x):
     x =  ((x >> 16) ^ x) & 0xFFFFFFFF
     return x
 
+# EVAL IMAGE FUNCTION
+# Modifications:
+#  - After getting the predictions send to prep_display and get the segmented images for non-rigid and rigid objects.
+#  - If save_path is None, prepare and publish the segmented images to ROS2 topics
 def evalimage(net:Yolact, path:str,camera_frame, nonrigid_pub, rigid_pub, cam_corr,save_path:str=None):
+    # Send the image to the GPU and apply the transformations and YOLACT model
     frame = torch.from_numpy(camera_frame).cuda().float()
     batch = FastBaseTransform()(frame.unsqueeze(0))
     preds = net(batch)
 
+    # Use the predictions to prepare the images for display
     img_numpy, img_nonrigid, img_rigid = prep_display(preds, frame, None, None, undo_transform=False)
     
     if save_path is None:
+        # Prepare and publish images to ROS2 topics
         img_numpy = img_numpy[:, :, (2, 1, 0)]
         img_nonrigid = img_nonrigid
         img_rigid = img_rigid
-
         
         nr_s = Image()
         r_s = Image()
@@ -711,6 +760,12 @@ def evalimage(net:Yolact, path:str,camera_frame, nonrigid_pub, rigid_pub, cam_co
         rigid_pub.publish(r_s)
         cam_corr.publish(cam)
 
+        cv2.imshow('YOLACT Segmentation', img_numpy)
+        cv2.imshow('Non-Rigid Segmentation', img_nonrigid)
+        cv2.imshow('Rigid Segmentation', img_rigid)
+        cv2.waitKey(1)
+    
+
     # if save_path is None:
     #     plt.imshow(img_numpy)
     #     plt.title(path)
@@ -718,270 +773,35 @@ def evalimage(net:Yolact, path:str,camera_frame, nonrigid_pub, rigid_pub, cam_co
     # else:
     #     cv2.imwrite(save_path, img_numpy)
 
-def evalimages(net:Yolact, input_folder:str, output_folder:str):
-    if not os.path.exists(output_folder):
-        os.mkdir(output_folder)
+# def evalimages(net:Yolact, input_folder:str, output_folder:str):
+#     if not os.path.exists(output_folder):
+#         os.mkdir(output_folder)
 
-    #print()
-    for p in Path(input_folder).glob('*'): 
-        path = str(p)
-        name = os.path.basename(path)
-        name = '.'.join(name.split('.')[:-1]) + '.png'
-        out_path = os.path.join(output_folder, name)
+#     #print()
+#     for p in Path(input_folder).glob('*'): 
+#         path = str(p)
+#         name = os.path.basename(path)
+#         name = '.'.join(name.split('.')[:-1]) + '.png'
+#         out_path = os.path.join(output_folder, name)
 
-        evalimage(net, path, out_path)
-        print(path + ' -> ' + out_path)
-    print('Done.')
+#         evalimage(net, path, out_path)
+#         print(path + ' -> ' + out_path)
+#     print('Done.')
 
-from multiprocessing.pool import ThreadPool
-from queue import Queue
-
-class CustomDataParallel(torch.nn.DataParallel):
-    """ A Custom Data Parallel class that properly gathers lists of dictionaries. """
-    def gather(self, outputs, output_device):
-        # Note that I don't actually want to convert everything to the output_device
-        return sum(outputs, [])
-
-def evalvideo(net:Yolact, path:str, out_path:str=None):
-    # If the path is a digit, parse it as a webcam index
-    is_webcam = path.isdigit()
-    
-    # If the input image size is constant, this make things faster (hence why we can use it in a video setting).
-    cudnn.benchmark = True
-    
-    if is_webcam:
-        vid = cv2.VideoCapture(int(path))
-    else:
-        vid = cv2.VideoCapture(path)
-    
-    if not vid.isOpened():
-        print('Could not open video "%s"' % path)
-        exit(-1)
-
-    target_fps   = round(vid.get(cv2.CAP_PROP_FPS))
-    frame_width  = round(vid.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = round(vid.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    
-    if is_webcam:
-        num_frames = float('inf')
-    else:
-        num_frames = round(vid.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    net = CustomDataParallel(net).cuda()
-    transform = torch.nn.DataParallel(FastBaseTransform()).cuda()
-    frame_times = MovingAverage(100)
-    fps = 0
-    frame_time_target = 1 / target_fps
-    running = True
-    fps_str = ''
-    vid_done = False
-    frames_displayed = 0
-
-    if out_path is not None:
-        out = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), target_fps, (frame_width, frame_height))
-
-    def cleanup_and_exit():
-        #print()
-        pool.terminate()
-        vid.release()
-        if out_path is not None:
-            out.release()
-        cv2.destroyAllWindows()
-        exit()
-
-    def get_next_frame(vid):
-        frames = []
-        for idx in range(video_multiframe):
-            frame = vid.read()[1]
-            if frame is None:
-                return frames
-            frames.append(frame)
-        return frames
-
-    def transform_frame(frames):
-        with torch.no_grad():
-            frames = [torch.from_numpy(frame).cuda().float() for frame in frames]
-            return frames, transform(torch.stack(frames, 0))
-
-    def eval_network(inp):
-        with torch.no_grad():
-            frames, imgs = inp
-            num_extra = 0
-            while imgs.size(0) < video_multiframe:
-                imgs = torch.cat([imgs, imgs[0].unsqueeze(0)], dim=0)
-                num_extra += 1
-            out = net(imgs)
-            if num_extra > 0:
-                out = out[:-num_extra]
-            return frames, out
-
-    def prep_frame(inp, fps_str):
-        with torch.no_grad():
-            frame, preds = inp
-            return prep_display(preds, frame, None, None, undo_transform=False, class_color=True, fps_str=fps_str)
-
-    frame_buffer = Queue()
-    video_fps = 0
-
-    # All this timing code to make sure that 
-    def play_video():
-        try:
-            nonlocal frame_buffer, running, video_fps, is_webcam, num_frames, frames_displayed, vid_done
-
-            video_frame_times = MovingAverage(100)
-            frame_time_stabilizer = frame_time_target
-            last_time = None
-            stabilizer_step = 0.0005
-            progress_bar = ProgressBar(30, num_frames)
-
-            while running:
-                frame_time_start = time.time()
-
-                if not frame_buffer.empty():
-                    next_time = time.time()
-                    if last_time is not None:
-                        video_frame_times.add(next_time - last_time)
-                        video_fps = 1 / video_frame_times.get_avg()
-                    if out_path is None:
-                        cv2.imshow(path, frame_buffer.get())
-                    else:
-                        out.write(frame_buffer.get())
-                    frames_displayed += 1
-                    last_time = next_time
-
-                    if out_path is not None:
-                        if video_frame_times.get_avg() == 0:
-                            fps = 0
-                        else:
-                            fps = 1 / video_frame_times.get_avg()
-                        progress = frames_displayed / num_frames * 100
-                        progress_bar.set_val(frames_displayed)
-
-                        print('\rProcessing Frames  %s %6d / %6d (%5.2f%%)    %5.2f fps        '
-                            % (repr(progress_bar), frames_displayed, num_frames, progress, fps), end='')
-
-                
-                # This is split because you don't want savevideo to require cv2 display functionality (see #197)
-                if out_path is None and cv2.waitKey(1) == 27:
-                    # Press Escape to close
-                    running = False
-                if not (frames_displayed < num_frames):
-                    running = False
-
-                if not vid_done:
-                    buffer_size = frame_buffer.qsize()
-                    if buffer_size < video_multiframe:
-                        frame_time_stabilizer += stabilizer_step
-                    elif buffer_size > video_multiframe:
-                        frame_time_stabilizer -= stabilizer_step
-                        if frame_time_stabilizer < 0:
-                            frame_time_stabilizer = 0
-
-                    new_target = frame_time_stabilizer if is_webcam else max(frame_time_stabilizer, frame_time_target)
-                else:
-                    new_target = frame_time_target
-
-                next_frame_target = max(2 * new_target - video_frame_times.get_avg(), 0)
-                target_time = frame_time_start + next_frame_target - 0.001 # Let's just subtract a millisecond to be safe
-                
-                if out_path is None or emulate_playback:
-                    # This gives more accurate timing than if sleeping the whole amount at once
-                    while time.time() < target_time:
-                        time.sleep(0.001)
-                else:
-                    # Let's not starve the main thread, now
-                    time.sleep(0.001)
-        except:
-            # See issue #197 for why this is necessary
-            import traceback
-            traceback.print_exc()
+# from multiprocessing.pool import ThreadPool
+# from queue import Queue
 
 
-    extract_frame = lambda x, i: (x[0][i] if x[1][i]['detection'] is None else x[0][i].to(x[1][i]['detection']['box'].device), [x[1][i]])
-
-    # Prime the network on the first frame because I do some thread unsafe things otherwise
-    print('Initializing model... ', end='')
-    first_batch = eval_network(transform_frame(get_next_frame(vid)))
-    print('Done.')
-
-    # For each frame the sequence of functions it needs to go through to be processed (in reversed order)
-    sequence = [prep_frame, eval_network, transform_frame]
-    pool = ThreadPool(processes=len(sequence) + video_multiframe + 2)
-    pool.apply_async(play_video)
-    active_frames = [{'value': extract_frame(first_batch, i), 'idx': 0} for i in range(len(first_batch[0]))]
-
-    print()
-    if out_path is None: print('Press Escape to close.')
-    try:
-        while vid.isOpened() and running:
-            # Hard limit on frames in buffer so we don't run out of memory >.>
-            while frame_buffer.qsize() > 100:
-                time.sleep(0.001)
-
-            start_time = time.time()
-
-            # Start loading the next frames from the disk
-            if not vid_done:
-                next_frames = pool.apply_async(get_next_frame, args=(vid,))
-            else:
-                next_frames = None
-            
-            if not (vid_done and len(active_frames) == 0):
-                # For each frame in our active processing queue, dispatch a job
-                # for that frame using the current function in the sequence
-                for frame in active_frames:
-                    _args =  [frame['value']]
-                    if frame['idx'] == 0:
-                        _append(fps_str)
-                    frame['value'] = pool.apply_async(sequence[frame['idx']], args=_args)
-                
-                # For each frame whose job was the last in the sequence (i.e. for all final outputs)
-                for frame in active_frames:
-                    if frame['idx'] == 0:
-                        frame_buffer.put(frame['value'].get())
-
-                # Remove the finished frames from the processing queue
-                active_frames = [x for x in active_frames if x['idx'] > 0]
-
-                # Finish evaluating every frame in the processing queue and advanced their position in the sequence
-                for frame in list(reversed(active_frames)):
-                    frame['value'] = frame['value'].get()
-                    frame['idx'] -= 1
-
-                    if frame['idx'] == 0:
-                        # Split this up into individual threads for prep_frame since it doesn't support batch size
-                        active_frames += [{'value': extract_frame(frame['value'], i), 'idx': 0} for i in range(1, len(frame['value'][0]))]
-                        frame['value'] = extract_frame(frame['value'], 0)
-                
-                # Finish loading in the next frames and add them to the processing queue
-                if next_frames is not None:
-                    frames = next_frames.get()
-                    if len(frames) == 0:
-                        vid_done = True
-                    else:
-                        active_frames.append({'value': frames, 'idx': len(sequence)-1})
-
-                # Compute FPS
-                frame_times.add(time.time() - start_time)
-                fps = video_multiframe / frame_times.get_avg()
-            else:
-                fps = 0
-            
-            fps_str = 'Processing FPS: %.2f | Video Playback FPS: %.2f | Frames in Buffer: %d' % (fps, video_fps, frame_buffer.qsize())
-            if not display_fps:
-                print('\r' + fps_str + '    ', end='')
-
-    except KeyboardInterrupt:
-        print('\nStopping...')
-    
-    cleanup_and_exit()
-
+# Main eval function
+# Modifications:
+#   - Adapted to only process a single image from a camera frame instead of giving various options 
+#       such as video, real-time video or stream of several images.
+#   - Removed all code related to calculating mAP and other metrics.
+#   - Handling of ROS2 publishers. 
 def evaluate(net:Yolact, dataset, nonrigid_pub, rigid_pub,cam_corr, camera_frame, train_mode=False):
     net.detect.use_fast_nms = fast_nms
     net.detect.use_cross_class_nms = cross_class_nms
     cfg.mask_proto_debug = mask_proto_debug
-
-    # TODO Currently we do not support Fast Mask Re-scroing in evalimage, evalimages, and evalvideo
 
     evalimage(net,None, camera_frame, nonrigid_pub, rigid_pub,cam_corr)
 
@@ -1004,97 +824,6 @@ def evaluate(net:Yolact, dataset, nonrigid_pub, rigid_pub,cam_corr, camera_frame
         timer.disable('Load Data')
 
     dataset_indices = list(range(dataset_size))
-    
-    # if shuffle:
-    #     random.shuffle(dataset_indices)
-    # elif not no_sort:
-    #     # Do a deterministic shuffle based on the image ids
-    #     #
-    #     # I do this because on python 3.5 dictionary key order is *random*, while in 3.6 it's
-    #     # the order of insertion. That means on python 3.6, the images come in the order they are in
-    #     # in the annotations file. For some reason, the first images in the annotations file are
-    #     # the hardest. To combat this, I use a hard-coded hash function based on the image ids
-    #     # to shuffle the indices we use. That way, no matter what python version or how pycocotools
-    #     # handles the data, we get the same result every time.
-    #     hashed = [badhash(x) for x in dataset.ids]
-    #     dataset_indices.sort(key=lambda x: hashed[x])
-
-    # dataset_indices = dataset_indices[:dataset_size]
-
-    # try:
-    #     # Main eval loop
-    #     for it, image_idx in enumerate(dataset_indices):
-    #         timer.reset()
-
-    #         with timer.env('Load Data'):
-    #             img, gt, gt_masks, h, w, num_crowd = dataset.pull_item(image_idx)
-
-    #             # Test flag, do not upvote
-    #             if cfg.mask_proto_debug:
-    #                 with open('scripts/info.txt', 'w') as f:
-    #                     f.write(str(dataset.ids[image_idx]))
-    #                 np.save('scripts/gt.npy', gt_masks)
-
-    #             batch = Variable(img.unsqueeze(0))
-    #             if cuda:
-    #                 batch = batch.cuda()
-
-    #         with timer.env('Network Extra'):
-    #             preds = net(batch)
-    #         # Perform the meat of the operation here depending on our mode.
-    #         if display:
-    #             img_numpy = prep_display(preds, img, h, w)
-    #         elif benchmark:
-    #             prep_benchmark(preds, h, w)
-    #         else:
-    #             prep_metrics(ap_data, preds, img, gt, gt_masks, h, w, num_crowd, dataset.ids[image_idx], detections)
-            
-    #         # First couple of images take longer because we're constructing the graph.
-    #         # Since that's technically initialization, don't include those in the FPS calculations.
-    #         if it > 1:
-    #             frame_times.add(timer.total_time())
-            
-    #         if display:
-    #             if it > 1:
-    #                 print('Avg FPS: %.4f' % (1 / frame_times.get_avg()))
-    #             plt.imshow(img_numpy)
-    #             plt.title(str(dataset.ids[image_idx]))
-    #             plt.show()
-    #         elif not no_bar:
-    #             if it > 1: fps = 1 / frame_times.get_avg()
-    #             else: fps = 0
-    #             progress = (it+1) / dataset_size * 100
-    #             progress_bar.set_val(it+1)
-    #             print('\rProcessing Images  %s %6d / %6d (%5.2f%%)    %5.2f fps        '
-    #                 % (repr(progress_bar), it+1, dataset_size, progress, fps), end='')
-
-
-
-    #     if not display and not benchmark:
-    #         print()
-    #         if output_coco_json:
-    #             print('Dumping detections...')
-    #             if output_web_json:
-    #                 detections.dump_web()
-    #             else:
-    #                 detections.dump()
-    #         else:
-    #             if not train_mode:
-    #                 print('Saving data...')
-    #                 with open(ap_data_file, 'wb') as f:
-    #                     pickle.dump(ap_data, f)
-
-    #             return calc_map(ap_data)
-    #     elif benchmark:
-    #         print()
-    #         print()
-    #         print('Stats for the last frame:')
-    #         timer.print_stats()
-    #         avg_seconds = frame_times.get_avg()
-    #         print('Average: %5.2f fps, %5.2f ms' % (1 / frame_times.get_avg(), 1000*avg_seconds))
-
-    # except KeyboardInterrupt:
-    #     print('Stopping...')
 
 
 def calc_map(ap_data):
