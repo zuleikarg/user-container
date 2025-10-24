@@ -20,7 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'infer_hf = neuflow_v2.infer_hf:main'
+            'infer_hf = neuflow_v2.infer_hf:main',
+            'slip = neuflow_v2.slip:main'
         ],
     },
 )
