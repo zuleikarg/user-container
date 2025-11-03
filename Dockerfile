@@ -1,5 +1,5 @@
-# Use NVIDIA CUDA 11.7 base image with Ubuntu 22.04
-FROM nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
+# Use NVIDIA CUDA 12.2 base image with Ubuntu 22.04
+FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
 
 # Set default shell
 SHELL ["/bin/bash", "-c"]
@@ -40,22 +40,39 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fim \
     && rm -rf /var/lib/apt/lists/*
 
-# PyTorch 1.13 for CUDA 11.7
+# PyTorch 2.3.0 for CUDA 12.2
 RUN pip3 install --no-cache-dir \
-    torch==1.13.1+cu117 \
-    torchvision==0.14.1+cu117 \
-    torchaudio==0.13.1 \
-    --extra-index-url https://download.pytorch.org/whl/cu117
+    torch==2.3.0 \
+    torchvision==0.18.0 \
+    torchaudio==2.3.0 \
+    --extra-index-url https://download.pytorch.org/whl/cu122
 
 RUN pip3 install --no-cache-dir \
-    numpy==1.24.4 \
-    opencv-python==3.4.18.65 \
+    numpy==1.26.4 \
+    opencv-python==4.5.4 \
     colcon-common-extensions \
     cython \
     pillow \
     pycocotools \
     matplotlib \
-    wheel==0.45.1
+    wheel==0.45.1 \
+    gradio==3.35.2 \
+    ultralytics \
+    pandas==2.0.3 
+
+
+RUN pip3 install --no-cache-dir \
+    seaborn==0.13.2 \
+    robotdatapy \
+    gdown \
+    gtsam \
+    open3d==0.18.0 \
+    scikit-image \
+    shapely \
+    transformers
+
+RUN pip3 install --no-cache-dir \
+    ultralytics==8.0.120
 
 RUN pip3 uninstall spatial-correlation-sampler==0.4.0
 
@@ -86,6 +103,11 @@ ENV PATH=/opt/ros/$ROS_DISTRO/bin:$PATH
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 ENV CUDA_HOME=/usr/local/cuda
 
+RUN apt-get update && apt-get install -y \
+    libgtk2.0-dev libcanberra-gtk-module libcanberra-gtk3-module \
+    && rm -rf /var/lib/apt/lists/*
+    
+RUN pip uninstall -y opencv-python-headless
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -qq -y --no-install-recommends \
@@ -105,10 +127,6 @@ RUN apt-get update \
     ros-${ROS_DISTRO}-nav-msgs \
     bash-completion \
     && rm -rf /etc/apt/apt.conf.d/docker-clean 
-    # # Setup Rosdep
-    # && rm /etc/ros/rosdep/sources.list.d/20-default.list \
-    # && rosdep init \
-    # && rm -rf /var/lib/apt/lists/*
 
 
 RUN apt-get update && apt-get install -y sudo    
@@ -138,12 +156,6 @@ COPY origin-msgs_arm64_1.0.1.deb /
 RUN dpkg -i /origin-msgs_arm64_1.0.1.deb || true \
     && apt-get install -f -y
 
-# Install extra dependencies
-# RUN sudo apt update && sudo apt install -y \
-#     <package you want to install>
-
-#RUN pip3 install spatial-correlation-sampler==0.4.0
-
 # Switch to the new user
 USER $USERNAME
 WORKDIR /home/$USERNAME/flow_ws
@@ -151,7 +163,7 @@ WORKDIR /home/$USERNAME/flow_ws
 COPY flow_ws/ /home/$USERNAME/flow_ws/
 
 # Fix permissions
-COPY --chown=zuleikarg:zuleikarg flow_ws/ /home/zuleikarg/flow_ws/
+COPY --chown=$USERNAME:$USERNAME flow_ws/ /home/$USERNAME/flow_ws/
 
 RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd /home/$USERNAME/flow_ws && \
