@@ -77,7 +77,7 @@ seed = None
 mask_proto_debug = False
 crop = False
 video_multiframe = 1
-score_threshold = 0.5
+score_threshold = 0.4
 dataset = None
 detect = False
 display_fps= False
@@ -158,7 +158,7 @@ class Segmentation(Node):
         # Create camera subscription
         self.camera = self.create_subscription(
             Image,
-            '/robot/camera/rgb/image_raw',
+            '/robot/camera/color/image_raw',
             self.camera_callback,
             10)
         
@@ -229,6 +229,27 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
             # Masks are drawn on the GPU, so don't copy
             masks = t[3][idx]
         classes, scores, boxes = [x[idx].cpu().numpy() for x in t[:3]]
+
+
+    # Remove small masks
+    if cfg.eval_mask_branch and masks is not None and masks.size(0) > 0:
+        # compute mask areas on GPU then bring to CPU for indexing
+        mask_areas = masks.view(masks.size(0), -1).sum(1).cpu().numpy().astype(int)
+
+        # If they have 100 pixels or more
+        keep_idx = np.where(mask_areas >= 100)[0]
+
+        if keep_idx.size != 0:
+            # Convert keep_idx to torch.LongTensor on same device as masks for GPU indexing
+            keep_idx_t = torch.from_numpy(keep_idx).long().to(masks.device)
+
+            # Keep only large enough masks (GPU tensor)
+            masks = masks[keep_idx_t]
+
+            # Filter classes/boxes/scores (they are numpy arrays already)
+            classes = classes[keep_idx]
+            boxes = boxes[keep_idx]
+            scores = scores[keep_idx]
 
     # The detections are reduced based on score threshold
     num_dets_to_consider = min(top_k, classes.shape[0])
@@ -306,20 +327,16 @@ def prep_display(dets_out, img, h, w, undo_transform=True, class_color=False, ma
         
         # Composite the image with the masks one by one
         masks_color_summand = masks_color[0]
+        masks_nonrigid_summand = masks_nonrigid[0]
+        masks_rigid_summand = masks_rigid[0]
         if num_dets_to_consider > 1:
             inv_alph_cumul = inv_alph_masks[:(num_dets_to_consider-1)].cumprod(dim=0)
             masks_color_cumul = masks_color[1:] * inv_alph_cumul
             masks_color_summand += masks_color_cumul.sum(dim=0)
 
-        masks_nonrigid_summand = masks_nonrigid[0]
-        if num_dets_to_consider > 1:
-            inv_alph_cumul = inv_alph_masks[:(num_dets_to_consider-1)].cumprod(dim=0)
             masks_nonrigid_cumul = masks_nonrigid[1:] * inv_alph_cumul
             masks_nonrigid_summand += masks_nonrigid_cumul.sum(dim=0)
 
-        masks_rigid_summand = masks_rigid[0]
-        if num_dets_to_consider > 1:
-            inv_alph_cumul = inv_alph_masks[:(num_dets_to_consider-1)].cumprod(dim=0)
             masks_rigid_cumul = masks_rigid[1:] * inv_alph_cumul
             masks_rigid_summand += masks_rigid_cumul.sum(dim=0)
 

@@ -12,7 +12,7 @@ from cv_bridge import CvBridge
 class MotRem(Node):
     def __init__(self):
         super().__init__('motion_removal')
-        self.rig_obj_removed_publisher_ = self.create_publisher(Image, 'rigid_opt_comb', 10)
+        #self.rig_obj_removed_publisher_ = self.create_publisher(Image, 'rigid_opt_comb', 10)
 
         self.bridge = CvBridge()
         self.rigid_object_image_ = np.empty(0)
@@ -83,49 +83,44 @@ class MotRem(Node):
         # Initiate ORB detector
         orb = cv2.ORB_create()
 
+        self.get_logger().info("Both images are ready.")
 
-        # # Create a large kernel (e.g., 15x15)
-        kernel = np.ones((7, 7), np.uint8)
+        nonrigid_mask = self.nonrigid_object_image_
+        rigid_mask = self.rigid_object_image_
+            
+        kernel = np.ones((5,5),np.uint8) 
+        rigid_mask_d = cv2.dilate(rigid_mask,kernel,iterations = 1)
+        nonrigid_mask_d = cv2.dilate(nonrigid_mask,kernel,iterations = 1) 
 
-        opt_image = np.copy(self.optical_flow_image_)
+        optflow_mask = self.optical_flow_image_
 
-        # # Apply dilation with multiple iterations
-        dilated_nr = cv2.dilate(self.nonrigid_object_image_, kernel, iterations=2)
-        dilated_r = cv2.dilate(self.rigid_object_image_, kernel, iterations=2)
-
-        numLabels, labels, stats, centroids = cv2.connectedComponentsWithStats(dilated_r, 0, cv2.CV_32S)
+        numLabels, labels, stats, centroids = cv2.connectedComponentsWithStats(rigid_mask_d, 0, cv2.CV_32S)
 
         moving_objects = []
 
         for label_id in range(1, numLabels):  # skip background
             object_mask = (labels == label_id).astype(np.uint8) * 255
+            object_pixels = np.count_nonzero(object_mask) 
+            if object_pixels > 100: # skiping components with less than 100 pixels
+                # Check overlap
+                overlap = cv2.bitwise_and(object_mask, optflow_mask)
+                overlap_pixels = np.count_nonzero(overlap)
 
-            # Resize opt_image if needed
-            if object_mask.shape != opt_image.shape:
-                opt_image = cv2.resize(opt_image, (object_mask.shape[1], object_mask.shape[0]))
-
-            # Check overlap
-            overlap = cv2.bitwise_and(object_mask, opt_image)
-
-            if np.count_nonzero(overlap) > 0:
-                moving_objects.append(object_mask)
+                if(overlap_pixels > 0 and (overlap_pixels/object_pixels)*100>=70): # 70% of minimum overlapping
+                    moving_objects.append(object_mask)
 
         # Combine masks
-        combined_mask = np.zeros_like(opt_image, dtype=np.uint8)
+        combined_mask = np.zeros_like(optflow_mask, dtype=np.uint8)
         for obj in moving_objects:
             combined_mask = cv2.bitwise_or(combined_mask, obj)
-
-        # Resize opt_image if needed
-        if combined_mask.shape != dilated_nr.shape:
-            combined_mask = cv2.resize(combined_mask, (dilated_nr.shape[1], dilated_nr.shape[0]))
-
-
+            
+        combined_mask = cv2.bitwise_or(combined_mask,nonrigid_mask)
         kp_out_nonrigid = []
         # find the keypoints with ORB
         kp = orb.detect(img_orb_gray,None)
         if len(kp) != 0:
             for k in kp:
-                if dilated_nr[int(k.pt[1]), int(k.pt[0])] != 255 and combined_mask[int(k.pt[1]), int(k.pt[0])] != 255:
+                if nonrigid_mask_d[int(k.pt[1]), int(k.pt[0])] != 255 and combined_mask[int(k.pt[1]), int(k.pt[0])] != 255:
                     kp_out_nonrigid.append(k)
 
         # compute the descriptors with ORB
