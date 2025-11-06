@@ -543,8 +543,8 @@ class OpticalFlow(Node):
         h, w = img_shape[:2]
 
         # Line coefficients (Ax + By + C = 0)
-        A = y2 - y1
-        B = x1 - x2
+        A = y2 - y1 + 1e-5
+        B = x1 - x2 + 1e-5
         C = x2*y1 - x1*y2
 
         # Possible intersections with the image borders
