@@ -10,6 +10,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/weights', [
+            'weights/yolact_plus_resnet50_54_800000.pth']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

@@ -48,8 +48,7 @@ RUN pip3 install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cu122
 
 RUN pip3 install --no-cache-dir \
-    numpy==1.26.4 \
-    opencv-python==4.5.4 \
+    opencv-python==4.5.4.60 \
     colcon-common-extensions \
     cython \
     pillow \
@@ -168,6 +167,9 @@ COPY --chown=$USERNAME:$USERNAME flow_ws/ /home/$USERNAME/flow_ws/
 RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd /home/$USERNAME/flow_ws && \
     colcon build
+
+RUN pip3 install --no-cache-dir \
+    numpy==1.26.4
 
 CMD ["/bin/bash"]
 
