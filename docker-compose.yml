@@ -1,7 +1,7 @@
 services:
   user-container:
     container_name: robot_flow
-    image: zuleikarg-container
+    image: robot_flow
     build:
       context: .
       dockerfile: Dockerfile

@@ -155,6 +155,9 @@ COPY origin-msgs_arm64_1.0.1.deb /
 RUN dpkg -i /origin-msgs_arm64_1.0.1.deb || true \
     && apt-get install -f -y
 
+# Symbolic link from python3 to python
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
 # Switch to the new user
 USER $USERNAME
 WORKDIR /home/$USERNAME/flow_ws
