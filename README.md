@@ -1,81 +1,65 @@
 # __DISCLAIMER__
-This base code has been _taken_ from the repository: [avular-robotics:user-container:origin](https://github.com/avular-robotics/user-container/tree/origin)
+The base code for docker has been _taken_ from the repository: [avular-robotics:user-container:origin](https://github.com/avular-robotics/user-container/tree/origin)
 
-# User container for the Origin
+## Installation
 
-The user container is an example container that can be used to develop on the Origin. It comes pre-installed with ROS and the necessary dependencies to develop for the Origin. 
+Firstly, it is essential to ensure that the GPU requirements are covered by the PC we want to installed the code to:
 
-This guide will walk you through how to use the user container to develop on the Origin.
-
-## Setting up the user container
-The user container is available on the Origin by default at `/data/user/containers`. If you want to update the user container files, or restore the user container to its default state, you can follow the following steps:
-
-1. SSH into the Origin
-> [!WARNING]
-> The next step will remove all files in the user container directory. Make sure to back up any files you want to keep.
-2. Remove the current user container files
-   
-    ```bash
-    rm -rf /data/user/containers
-    ```
-
-3. Clone the user container files to the Origin
-    ```bash
-    git clone https://github.com/zuleikarg/user-container.git /data/user/containers
-    ```
-4. Building the user containers
-    ```bash
-    cd /data/user/containers
-    docker compose build
-    ```
-
-## Using the user container for development
-We suggest that you do all your development inside the user container. This will ensure that your code runs on the Origin as expected and will not be lost when the Origin is updated.
-
-First of all, you need to start the user container. You can do this by running the following command:
+On a window terminal:
 ```bash
-cd /data/user/containers
-docker compose up -d
+nvidia-smi
+```
+The top CUDA version should be greater or equal to 12.2 for this specific Dockerfile:
+![nvidia-smi command output](https://github.com/zuleikarg/user-container/blob/main/imgs/nvidia-smi.png?raw=true)
+
+On the desired directory:
+```bash
+git clone https://github.com/zuleikarg/user-container.git & cd user-container
 ```
 
-To enter the user container, you can run the following command:
+Build the image with the dockerfile and docker-compose.yml:
 ```bash
-docker exec -it user /bin/bash
+docker compose build
 ```
 
-You can now start developing on the Origin. In the container, we have an user named `user`. 
-This user has sudo rights, so you can install packages and run commands as root. When entering 
-the container, you will be in the `/home/user/flow_ws` directory. This is the workspace directory 
-where you can start developing your code. This workspace directory is also mounted from the host OS,
-this is done so that you can easily `down` and `up` the container without losing your code. 
-
-> [!WARNING]
-> Be aware that recreating the container will remove all files outside the workspace directory.
-
-### Installing packages
-You probably want to install some packages to develop your code. To test out if the package works you
-can just install it in the container. If you are happy with the package you can add it to the `Dockerfile`.
-After adding the package to the `Dockerfile` you need to rebuild the container. You can do this by running
-the following command from the `/data/user/containers` directory:
+Allow GUI access if needed:
 ```bash
-docker compose up -d --build
+xhost +local:docker
 ```
+Create and run the container:
+```bash
+sudo docker run -it --rm \
+  --gpus all \
+  --privileged \
+  --device=/dev/video0:/dev/video0 \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  --name <container_name> robot_flow
+```
+Once inside:
+```bash
+source/install/setup.bash
+```
+
+Before running the nodes, an external resource for yolact has to be setup:
+```bash
+cd src/yolact/external/DCNv2
+```
+```bash
+sudo ./make.sh
+```
+
+After this step, the nodes are ready to be used. The data from the topics can be published using a, for example rosbag on another container created from the same image.
 
 ## Flow_ws
 
 The code included inside _flow_ws_ are related to the combination of OpticalFlow and Instance Segmentation in order to generate and discard the essential ORBs to proceed with the SLAM procedure.
 
-In different terminal windows the execution should be as follows:
+In different terminal windows with containers from the same image, the execution should be as follows:
 
 __For all terminals__
-```bash
-source install/setup.bash
-```
 
-__For different temrinals__
-```bash
-ros2 run sensor_image camera_publisher
-```
+__For different terminals__
 
 ```bash
 ros2 run yolact seg_node
@@ -87,4 +71,9 @@ ros2 run neuflow_v2 infer_hf
 
 ```bash
 ros2 run dio motion_removal
+```
+
+If only yolact and a camera Intel RealSense are used, another node will be necessary to publish the frames through a topic:
+```bash
+ros2 run yolact seg_node
 ```
