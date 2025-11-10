@@ -59,10 +59,6 @@ The code included inside _flow_ws_ are related to the combination of OpticalFlow
 
 In different terminal windows with containers from the same image, the execution should be as follows:
 
-__For all terminals__
-
-__For different terminals__
-
 Instance segmentation:
 ```bash
 ros2 run yolact seg_node
@@ -83,7 +79,13 @@ ros2 run yolact seg_node
 
 ## How does it work?
 
-For this improvement, [DIO-SLAM](https://pmc.ncbi.nlm.nih.gov/articles/PMC11435655/) was used as a reference. This way, there are two main parts implemented: instance segmentation and opticalflow. Additionally, a visual slip detector was created from the floor segmentation done to improve opticalflow's result.
+[DIO-SLAM](https://pmc.ncbi.nlm.nih.gov/articles/PMC11435655/) presents an improvement from the original pipeline of ORB3-SLAM, adding to the pipeline both instance information from the frames and OpticalFlow to ensure that dynamic objects are not accounted for the localization of the robot on the map and its creation.
+
+The assumption that both rigid and non-rigid objects coexist on the surroundings of the robot is stated and with it, it is claimed that non-rigid objects, such as humans and animals are not reliable for a SLAM task due to its moving nature.
+
+Therefore, the use of an instance segmentation can assist on this labour, by segmenting both people and different types of animals and removing them from the final solution.
+
+On the other hand, not only non-rigid objects can move around the robot, but also rigid objects which movement has been, at least, started by non-rigid entities. That’s where the role of OpticalFlow becomes essential. In this case, dense OpticalFlow will determine the movement of each one of the pixels of the image, allowing us to compare the segments obtained to the rigid object’s segmentations from the previous method.
 
 ### Instance Segmentation – [YOLACT++](https://github.com/dbolya/yolact)
 
@@ -92,6 +94,13 @@ For this improvement, [DIO-SLAM](https://pmc.ncbi.nlm.nih.gov/articles/PMC114356
 | RGB camera frame  | Nonrigid elements’ mask  |
 |   | Rigid elements’ mask  |
 |   | Corresponding RGB image  |
+
+As for instance segmentation, YOLACT++ was used. Unlike its predecessor, YOLACT, which was used in DIO-SLAM, this version has a better result/efficiency ratio since trades off slightly more computational cost with best performance.
+This method is capable of generating the bbox, segmentation, score and label of each of the objects it has been trained for, in this case, all the objects in the COCO dataset.
+
+With this information in mind, rigid and non-rigid objects were separated for the two masks needed in DIO-SLAM. This way, when the label corresponds to animals or people it would be added as a white segment with black background for the non-rigid object masks. For the rigid object mask, the process would be the same but with all objects detected but people and animals.
+The last mask would be compared to the OpticalFlow mask later.
+
 
 ### OpticalFlow – [NeuFlow_v2](https://github.com/neufieldrobotics/NeuFlow_v2)
 
@@ -102,6 +111,14 @@ For this improvement, [DIO-SLAM](https://pmc.ncbi.nlm.nih.gov/articles/PMC114356
 | Odometry  |   |
 | Transformations  |   |
 
+NeoFlow_v2 [3] was selected to take over the task since it demonstrated to provide faster and cleaner results than the method used in the original DIO-SLAM.
+
+Nevertheless, there was still a necessary issue to address. As it was stated on DIO-SLAM paper, the dense OpticalFlow does not account for self-motion flow, which it is required to compensate if it is aimed to work with moving cameras, and therefore with moving robots like the Origin One.
+
+Once estimated, from the total opticalflow, the ego-motion flow is subtracted to get the __residual opticalflow__, which is the result we want to keep.
+
+In addition, a floor segmentation was created and added to the resulting mask at the end, aiming to remove any noise that could appear on the ground surface.
+
 ### Slip detector
 
 | __Subscribers__  | __Publishers__ |
@@ -111,6 +128,17 @@ For this improvement, [DIO-SLAM](https://pmc.ncbi.nlm.nih.gov/articles/PMC114356
 | Odometry  |   |
 | Transformations  |   |
 
+The texture of the floor is increased with _cv2.equalizeHist_, on both previous and current images, that only show the floor (the rest in black); especially interesting step for smooth surfaces such as the testing area’s floor. Then, SHIFT points are extracted and the matches of points between both images are found.
+
+Open3d package made possible to directly extract an estimated transformation between the images with the matches and those points once transformed into 3d pointclouds, thanks to their depth information.
+This transformation is compared to the one obtained with odometry. Separately, rotation and translation error are calculated, and a specific algorithm is applied to raise a flag when slip is detected.
+
+This code will detect both cases of slip:
+ - When camera detects movement, but the robot is not moving, which means that the robot is statically slipping.
+ - When the robot is moving but the camera is not detecting movement, which means that the robot is moving on the same spot.
+
+However, for the last case, it was noticed that the odometry was already compensated for this lack of movement of the robot, most likely by using the IMU information.
+
 ### Dio node
 
 | __Subscribers__  | __Publishers__ |
@@ -119,3 +147,6 @@ For this improvement, [DIO-SLAM](https://pmc.ncbi.nlm.nih.gov/articles/PMC114356
 | Rigid elements’ mask  |   |
 | Corresponding RGB image  |   |
 | OPticalFlow final mask  |   |
+
+Dio is a package created as the joint of both YOLACT++ and NeuFlow_v2. Inside the node, the final mask was created by adding the nonrigid mask together with the rigid component’s masks of those with a bigger or equal intersection of 70% with OpticalFlow mask.
+
