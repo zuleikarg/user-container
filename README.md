@@ -18,6 +18,7 @@ In the desired directory:
 ```bash
 git clone https://github.com/zuleikarg/user-container.git & cd user-container
 ```
+After the last step, in the yolact/weights folder it is needed to add the desired yolact model. In the GitHub website it is possible to find various of them. But the model yolact_plus_resnet50_54_800000.pth is the one set by default. If desired to change, it is necessary to specify it on the segmentation.py code in yolact/yolact directory.
 
 Build the image with the dockerfile and docker-compose.yml:
 ```bash
