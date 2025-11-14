@@ -41,7 +41,7 @@ sudo docker run -it --rm \
 ```
 Once inside:
 ```bash
-source/install/setup.bash
+source install/setup.bash
 ```
 
 Before running the nodes, an external resource for yolact has to be set up:
