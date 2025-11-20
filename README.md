@@ -3,6 +3,11 @@
 
 # Improvement of vSLAM method using instance segmentation and opticalflow
 
+| Dio node result |
+|---------------------------|
+| ![Dio node result](imgs/result.gif) |
+
+
 ## Installation
 
 Firstly, it is essential to ensure that the GPU requirements are covered by the PC we want to installed the code to:
